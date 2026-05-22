@@ -239,7 +239,7 @@ const toClientUser = (user) => ({
   profileCompleted: Boolean(user.profile_completed),
   membership: user.membership || 'none',
   loveCoins: user.love_coins || 0,
-  profilePic: user.profile_pic,
+  profilePic: normalizeImageUrl(user.profile_pic),
   age: user.age,
   bio: user.bio,
   hobbies: user.hobbies || [],
@@ -247,6 +247,29 @@ const toClientUser = (user) => ({
   upiId: user.upi_id,
   matchesUsed: user.matches_used || 0,
   matchesResetDate: user.matches_reset_date
+});
+
+const normalizeImageUrl = (url) => {
+  if (!url || typeof url !== 'string') return url || null;
+
+  try {
+    const parsed = new URL(url);
+    if (
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+      parsed.pathname.startsWith('/uploads/')
+    ) {
+      return parsed.pathname;
+    }
+  } catch {
+    // Relative paths are already fine.
+  }
+
+  return url;
+};
+
+const normalizeProfile = (profile) => ({
+  ...profile,
+  profile_pic: normalizeImageUrl(profile.profile_pic)
 });
 
 const localRegister = async ({ name, email, password, phone }) => {
@@ -376,6 +399,7 @@ const getLocalProfilesPayload = () => {
   const db = readLocalDb();
   const profiles = db.profiles
     .filter(profile => !profile.status || profile.status === 'active')
+    .map(normalizeProfile)
     .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
   const premiumProfiles = profiles.filter(profile => profile.visibility === 'top');
   const normalProfiles = profiles.filter(profile => profile.visibility !== 'top');
@@ -636,7 +660,7 @@ app.post('/api/auth/login', async (req, res) => {
         profileCompleted: user.profile_completed,
         membership: user.membership,
         loveCoins: user.love_coins,
-        profilePic: user.profile_pic,
+        profilePic: normalizeImageUrl(user.profile_pic),
         age: user.age,
         bio: user.bio,
         hobbies: user.hobbies,
@@ -788,7 +812,7 @@ app.post('/api/auth/google/login', async (req, res) => {
         profileCompleted: existingUser.profile_completed,
         membership: existingUser.membership,
         loveCoins: existingUser.love_coins,
-        profilePic: existingUser.profile_pic,
+        profilePic: normalizeImageUrl(existingUser.profile_pic),
         age: existingUser.age,
         bio: existingUser.bio,
         hobbies: existingUser.hobbies,
@@ -858,7 +882,7 @@ app.post('/api/auth/google/register', async (req, res) => {
           profileCompleted: existingUser.profile_completed,
           membership: existingUser.membership,
           loveCoins: existingUser.love_coins,
-          profilePic: existingUser.profile_pic
+          profilePic: normalizeImageUrl(existingUser.profile_pic)
         }
       });
     }
@@ -902,7 +926,7 @@ app.post('/api/auth/google/register', async (req, res) => {
         profileCompleted: false,
         membership: newUser.membership,
         loveCoins: newUser.love_coins,
-        profilePic: newUser.profile_pic
+        profilePic: normalizeImageUrl(newUser.profile_pic)
       }
     });
   } catch (err) {
@@ -955,7 +979,7 @@ app.get('/api/user/me', authenticateToken, async (req, res) => {
       profileCompleted: user.profile_completed,
       membership: user.membership,
       loveCoins: user.love_coins,
-      profilePic: user.profile_pic,
+      profilePic: normalizeImageUrl(user.profile_pic),
       age: user.age,
       bio: user.bio,
       hobbies: user.hobbies,
@@ -1025,7 +1049,7 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
         profileCompleted: user.profile_completed,
         membership: user.membership,
         loveCoins: user.love_coins,
-        profilePic: user.profile_pic,
+        profilePic: normalizeImageUrl(user.profile_pic),
         age: user.age,
         bio: user.bio,
         hobbies: user.hobbies,
@@ -1063,7 +1087,9 @@ app.get('/api/profiles', async (req, res) => {
     
     if (error) throw error;
 
-    const profiles = (allProfiles || []).filter(profile => !profile.status || profile.status === 'active');
+    const profiles = (allProfiles || [])
+      .filter(profile => !profile.status || profile.status === 'active')
+      .map(normalizeProfile);
     
     // Separate premium and normal profiles
     const premiumProfiles = profiles.filter(p => p.visibility === 'top');
@@ -1390,11 +1416,11 @@ app.get('/api/admin/profiles', authenticateAdmin, async (req, res) => {
     
     if (error) throw error;
     
-    res.json(profiles);
+    res.json((profiles || []).map(normalizeProfile));
   } catch (err) {
     console.error('Admin get profiles error:', err);
     const db = readLocalDb();
-    return res.json([...db.profiles].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
+      return res.json([...db.profiles].map(normalizeProfile).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)));
   }
 });
 
