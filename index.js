@@ -374,7 +374,9 @@ const localUpdateProfile = (userId, profileData) => {
 
 const getLocalProfilesPayload = () => {
   const db = readLocalDb();
-  const profiles = db.profiles.filter(profile => profile.status === 'active' && !profile.user_id);
+  const profiles = db.profiles
+    .filter(profile => !profile.status || profile.status === 'active')
+    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
   const premiumProfiles = profiles.filter(profile => profile.visibility === 'top');
   const normalProfiles = profiles.filter(profile => profile.visibility !== 'top');
 
@@ -383,6 +385,57 @@ const getLocalProfilesPayload = () => {
     normalProfiles: normalProfiles.map(profile => ({ ...profile, isBlurred: false })),
     isVIP: false
   };
+};
+
+const localAddProfile = (profileData) => {
+  const db = readLocalDb();
+  const profile = {
+    id: uuidv4(),
+    name: profileData.name,
+    age: profileData.age || null,
+    bio: profileData.bio || null,
+    hobbies: profileData.hobbies || [],
+    telegram: profileData.telegram || null,
+    profile_pic: profileData.profile_pic || null,
+    visibility: profileData.visibility || 'normal',
+    status: profileData.status || 'active',
+    user_id: null,
+    created_at: new Date().toISOString()
+  };
+
+  db.profiles.push(profile);
+  writeLocalDb(db);
+  return profile;
+};
+
+const localUpdateAdminProfile = (id, updates) => {
+  const db = readLocalDb();
+  const profileIndex = db.profiles.findIndex(profile => profile.id === id);
+
+  if (profileIndex === -1) {
+    const error = new Error('Profile not found');
+    error.status = 404;
+    throw error;
+  }
+
+  db.profiles[profileIndex] = {
+    ...db.profiles[profileIndex],
+    ...updates,
+    hobbies: updates.hobbies || db.profiles[profileIndex].hobbies || [],
+    status: updates.status || db.profiles[profileIndex].status || 'active'
+  };
+
+  writeLocalDb(db);
+  return db.profiles[profileIndex];
+};
+
+const localDeleteAdminProfile = (id) => {
+  const db = readLocalDb();
+  const beforeCount = db.profiles.length;
+  db.profiles = db.profiles.filter(profile => profile.id !== id);
+  db.likes = (db.likes || []).filter(like => like.to_profile_id !== id);
+  writeLocalDb(db);
+  return beforeCount !== db.profiles.length;
 };
 
 // Auth Middleware
@@ -1000,22 +1053,21 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
 // Get profiles for dating dashboard (public - no auth required)
 app.get('/api/profiles', async (req, res) => {
   try {
-    // Get all active admin-created profiles
-    let query = supabase
+    // Get every active profile. Do not hide rows just because user_id/status is missing.
+    const { data: allProfiles, error } = await supabase
       .from('profiles')
       .select('*')
-      .is('user_id', null)
-      .eq('status', 'active');
+      .order('created_at', { ascending: false });
     
-    let { data: profiles, error } = await query;
-    
-    console.log('Fetched profiles:', profiles?.length || 0, 'profiles');
+    console.log('Fetched profiles:', allProfiles?.length || 0, 'profiles');
     
     if (error) throw error;
+
+    const profiles = (allProfiles || []).filter(profile => !profile.status || profile.status === 'active');
     
     // Separate premium and normal profiles
-    const premiumProfiles = profiles?.filter(p => p.visibility === 'top') || [];
-    const normalProfiles = profiles?.filter(p => p.visibility !== 'top') || [];
+    const premiumProfiles = profiles.filter(p => p.visibility === 'top');
+    const normalProfiles = profiles.filter(p => p.visibility !== 'top');
     
     res.json({
       premiumProfiles: premiumProfiles.map(p => ({
@@ -1373,6 +1425,9 @@ app.post('/api/admin/profiles', authenticateAdmin, async (req, res) => {
     res.json(profile);
   } catch (err) {
     console.error('Admin add profile error:', err);
+    if (isDatabaseConnectionError(err)) {
+      return res.json(localAddProfile(req.body));
+    }
     res.status(500).json({ error: 'Failed to add profile' });
   }
 });
@@ -1402,6 +1457,16 @@ app.put('/api/admin/profiles/:id', authenticateAdmin, async (req, res) => {
     res.json(profile);
   } catch (err) {
     console.error('Admin update profile error:', err);
+    if (isDatabaseConnectionError(err)) {
+      try {
+        const { name, age, bio, hobbies, telegram, profile_pic, visibility, status } = req.body;
+        const updates = { name, age, bio, hobbies, telegram, profile_pic, visibility, status };
+        Object.keys(updates).forEach(key => updates[key] === undefined && delete updates[key]);
+        return res.json(localUpdateAdminProfile(req.params.id, updates));
+      } catch (localErr) {
+        return res.status(localErr.status || 500).json({ error: localErr.message || 'Failed to update local profile' });
+      }
+    }
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
@@ -1434,6 +1499,10 @@ app.delete('/api/admin/profiles/:id', authenticateAdmin, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Admin delete profile error:', err);
+    if (isDatabaseConnectionError(err)) {
+      localDeleteAdminProfile(req.params.id);
+      return res.json({ success: true });
+    }
     res.status(500).json({ error: 'Failed to delete profile' });
   }
 });
@@ -1500,8 +1569,20 @@ app.delete('/api/admin/profiles', authenticateAdmin, async (req, res) => {
     res.json({ success: true, message: `${profileIds.length} profiles deleted`, deleted: profileIds.length });
   } catch (err) {
     console.error('Admin delete all profiles error:', err);
+    if (isDatabaseConnectionError(err)) {
+      const db = readLocalDb();
+      const deleted = db.profiles.length;
+      db.profiles = [];
+      db.likes = [];
+      writeLocalDb(db);
+      return res.json({ success: true, message: `${deleted} profiles deleted`, deleted });
+    }
     res.status(500).json({ error: 'Failed to delete profiles: ' + err.message });
   }
+});
+
+app.get('/api/local/profiles', (req, res) => {
+  res.json(getLocalProfilesPayload());
 });
 
 // Get all users (admin)
