@@ -1989,6 +1989,29 @@ app.post('/api/demo/init-profiles', async (req, res) => {
   }
 });
 
+// Root/API info
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Crushrr API',
+    status: 'ok',
+    message: 'Backend is running. Use /api/health or /api/profiles.',
+    endpoints: {
+      health: '/api/health',
+      profiles: '/api/profiles',
+      login: '/api/auth/login',
+      register: '/api/auth/register'
+    }
+  });
+});
+
+app.get('/api', (req, res) => {
+  res.json({
+    name: 'Crushrr API',
+    status: 'ok',
+    endpoints: ['/api/health', '/api/profiles', '/api/auth/login', '/api/auth/register']
+  });
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
   const health = {
