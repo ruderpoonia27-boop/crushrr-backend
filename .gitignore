@@ -1,0 +1,9 @@
+node_modules/
+uploads/
+data/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+$null
